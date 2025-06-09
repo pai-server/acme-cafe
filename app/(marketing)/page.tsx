@@ -107,7 +107,9 @@ export default function LandingPage() {
             <div className="inline-flex items-center gap-2 bg-white rounded-full px-4 py-2 shadow-sm border border-orange-200 mb-8">
               <div className="flex -space-x-1">
                 {[1,2,3,4].map((i) => (
-                  <div key={i} className="w-6 h-6 rounded-full bg-orange-500 border-2 border-white"></div>
+                  <div key={i} className="w-6 h-6 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 border-2 border-white shadow-sm flex items-center justify-center text-white text-xs font-bold">
+                    {i === 1 ? 'LM' : i === 2 ? 'RS' : i === 3 ? 'CL' : 'AR'}
+                  </div>
                 ))}
               </div>
               <span className="text-sm font-medium text-gray-700">
