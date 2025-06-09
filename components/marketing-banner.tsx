@@ -55,11 +55,11 @@ export function MarketingBanner() {
           {/* Minimize button */}
           <button
             onClick={handleCollapse}
-            className="absolute top-2 right-2 p-1 hover:bg-white/20 rounded-full transition-colors"
+            className="absolute top-2 right-2 p-3 hover:bg-white/20 rounded-full transition-colors group z-10"
             aria-label="Minimizar banner"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+            <svg className="w-4 h-4 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M20 12H4" />
             </svg>
           </button>
 
@@ -72,13 +72,13 @@ export function MarketingBanner() {
               <span className="text-sm font-semibold">SaaS Starter</span>
             </div>
 
-            {/* Content */}
-            <h3 className="text-lg font-bold mb-1 leading-tight">
-              Demo de Stripe Billing para suscripciones
-            </h3>
-            <p className="text-sm text-blue-100 mb-4 leading-relaxed">
-              Acme Cafes es un SaaS starter que demuestra pagos recurrentes y gestión de suscripciones con Stripe.
-            </p>
+                      {/* Content */}
+          <h3 className="text-lg font-bold mb-1 leading-tight">
+            Este sitio es una demo de Stripe Billing para suscripciones
+          </h3>
+          <p className="text-sm text-blue-100 mb-4 leading-relaxed">
+            Acme Cafes no es un producto real.
+          </p>
 
             {/* Action button */}
             <Button
