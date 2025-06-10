@@ -259,16 +259,30 @@ export default function PricingPage() {
                         {product.name}
                       </h3>
                       <div className="mb-4">
-                        <span className="text-5xl font-bold text-gray-900">
-                          ${Math.floor(price.unitAmount / 100)}
-                        </span>
-                        <span className="text-xl text-gray-500 ml-2">
-                          MXN/{billingInterval === 'month' ? 'mes' : 'año'}
-                        </span>
-                        {billingInterval === 'year' && (
-                          <div className="text-sm text-green-600 font-medium mt-1">
-                            Ahorras ${Math.floor((price.unitAmount * 12 * 0.25) / 100)} MXN/año
-                          </div>
+                        {billingInterval === 'month' ? (
+                          <>
+                            <span className="text-5xl font-bold text-gray-900">
+                              ${Math.floor(price.unitAmount / 100)}
+                            </span>
+                            <span className="text-xl text-gray-500 ml-2">
+                              MXN/mes
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-5xl font-bold text-gray-900">
+                              ${Math.floor(price.unitAmount / 12 / 100)}
+                            </span>
+                            <span className="text-xl text-gray-500 ml-2">
+                              MXN/mes
+                            </span>
+                            <div className="text-sm text-gray-600 mt-1">
+                              Facturado como ${Math.floor(price.unitAmount / 100)} MXN/año
+                            </div>
+                            <div className="text-sm text-green-600 font-medium mt-1">
+                              Ahorras ${Math.floor(((price.unitAmount / 0.8) - price.unitAmount) / 100)} MXN/año
+                            </div>
+                          </>
                         )}
                       </div>
                       <div className="flex items-center justify-center gap-2 text-sm">
