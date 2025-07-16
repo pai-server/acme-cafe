@@ -60,6 +60,11 @@ export default function CheckoutForm({ priceId, trialDays, productDetails, clien
       const useCustomCheckout = selectedPaymentMethod == 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR';
       
       if (useCustomCheckout) {
+        // Verificar que el paymentIntent existe
+        if (!paymentIntent.paymentIntent) {
+          throw new Error('No se pudo obtener la información del payment intent');
+        }
+        
         // Crear confirmation token
         //const confirmationToken = await stripe.createConfirmationToken({elements});
         

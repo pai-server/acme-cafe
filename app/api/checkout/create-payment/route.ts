@@ -41,7 +41,7 @@ export async function GET(request: Request) {
     }
 
     // Crear o obtener el customer de Stripe
-    let stripeCustomerId: string;
+    let stripeCustomerId: string | undefined;
     let team: any = null;
 
     // Si se proporciona teamId, buscar el equipo existente
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
       
       if (results.length > 0) {
         team = results[0];
-        stripeCustomerId = team.stripeCustomerId;
+        stripeCustomerId = team.stripeCustomerId || undefined;
       }
     }
 
@@ -73,7 +73,7 @@ export async function GET(request: Request) {
       
       if (userWithTeam.length > 0 && userWithTeam[0].team) {
         team = userWithTeam[0].team;
-        stripeCustomerId = team.stripeCustomerId;
+        stripeCustomerId = team.stripeCustomerId || undefined;
       }
     }
 
@@ -140,7 +140,20 @@ export async function GET(request: Request) {
         { status: 500 }
       );
     }
-    
+
+    // Asegurar que latest_invoice es un objeto expandido, no solo un string ID
+    const invoice = typeof subscription.latest_invoice === 'string'
+      ? await stripe.invoices.retrieve(subscription.latest_invoice, {
+          expand: ['confirmation_secret']
+        })
+      : subscription.latest_invoice;
+
+    if (!invoice.confirmation_secret) {
+      return NextResponse.json(
+        { message: 'No se pudo obtener el confirmation secret' },
+        { status: 500 }
+      );
+    }
     
     // Preparar detalles del producto para el frontend
     let features: string[] = [];
@@ -154,7 +167,7 @@ export async function GET(request: Request) {
     
     // Devolver el clientSecret y detalles del producto
     return NextResponse.json({
-      clientSecret: subscription.latest_invoice.confirmation_secret.client_secret,
+      clientSecret: invoice.confirmation_secret.client_secret,
       productDetails: {
         name: productInfo.product.name,
         description: productInfo.product.description,

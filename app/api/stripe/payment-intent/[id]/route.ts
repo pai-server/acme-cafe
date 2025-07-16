@@ -1,30 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { stripe } from '@/lib/payments/stripe';
 
 export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const paymentIntentId = params.id;
+    const { id } = await params;
     
-    if (!paymentIntentId) {
-      return NextResponse.json(
-        { message: 'PaymentIntent ID es requerido' },
-        { status: 400 }
-      );
-    }
-
-    // Consultar el PaymentIntent en Stripe
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    const paymentIntent = await stripe.paymentIntents.retrieve(id);
     
-    return NextResponse.json(paymentIntent);
-    
-  } catch (error: any) {
-    console.error('Error al obtener PaymentIntent:', error);
-    
-    return NextResponse.json(
-      { message: error.message || 'Error al obtener información del pago' },
+    return Response.json({ paymentIntent });
+  } catch (error) {
+    console.error('Error retrieving payment intent:', error);
+    return Response.json(
+      { error: 'Failed to retrieve payment intent' },
       { status: 500 }
     );
   }

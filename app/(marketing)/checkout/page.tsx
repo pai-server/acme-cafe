@@ -94,7 +94,7 @@ export default function CheckoutPage() {
   
   // Opciones de apariencia para el PaymentElement
   const appearance = {
-    theme: 'stripe',
+    theme: 'stripe' as const,
     variables: {
       colorPrimary: '#f97316',
       colorBackground: '#ffffff',
@@ -114,7 +114,7 @@ export default function CheckoutPage() {
       {
         id: 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR',
         options: {
-          type: 'static',
+          type: 'static' as const,
           subtitle: 'Paga con tu tarjeta de crédito o débito',
         }
       }

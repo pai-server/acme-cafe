@@ -111,7 +111,6 @@ export async function POST(request: Request) {
       const errorData = await conektaResponse.json();
       console.error('Error de Conekta:', errorData);
       
-      console.log(errorData);
       // Registra en Stripe el error de Conekta
       const paymentRecord = await stripe.paymentRecords.reportPayment({
         amount_requested: {
@@ -169,8 +168,6 @@ export async function POST(request: Request) {
 
     const charge = order.charges.data[0];
     
-    console.log(charge)
-
     // Crear método de pago personalizado en Stripe usando un card payment method
     const paymentMethod = await stripe.paymentMethods.create({
       type: 'custom',
@@ -193,6 +190,37 @@ export async function POST(request: Request) {
     // Actualizar el método de pago por defecto de la suscripción
     await stripe.subscriptions.update(subscription.id, {
       default_payment_method: paymentMethod.id
+    });
+
+    // Reportar el pago exitoso a Stripe usando Payment Records en lugar de crear un payment method
+    const paymentRecord = await stripe.paymentRecords.reportPayment({
+      amount_requested: {
+        value: paymentIntent.amount,
+        currency: paymentIntent.currency || 'mxn'
+      },
+      payment_method_details: {
+        type: 'custom',
+        custom: {
+          type: 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR',
+        }
+      },
+      customer_details: {
+        customer: stripeCustomer.id
+      },
+      initiated_at: Math.floor(Date.now() / 1000),
+      customer_presence: 'on_session',
+      payment_reference: charge.id,
+      outcome: 'guaranteed',
+      guaranteed: {
+        guaranteed_at: Math.floor(Date.now() / 1000)
+      },
+      metadata: {
+        conekta_order_id: order.id,
+        conekta_charge_id: charge.id,
+        external_id: `conekta_${charge.id}`,
+        payment_processor: 'conekta',
+        paymentIntentId: paymentIntentId
+      }
     });
     
     // Actualizar el invoice con el método de pago
@@ -219,32 +247,9 @@ export async function POST(request: Request) {
       }
     });
     
-    const paymentRecord = await stripe.paymentRecords.reportPayment({
-      amount_requested: {
-        value: charge.amount,
-        currency: charge.currency
-      },
-      payment_method_details: {
-        payment_method: paymentMethod.id
-      },
-      customer_details: {
-        customer: stripeCustomer.id
-      },
-      initiated_at: charge.created_at,
-      customer_presence: 'on_session',
-      payment_reference: charge.id,
-      outcome: 'guaranteed',
-      guaranteed: {
-        guaranteed_at: charge.paid_at
-      }
-    });
-
-    // Generar ID de transacción
-    const transactionId = `conekta_${charge.id}`;
-
     return NextResponse.json({
       success: true,
-      transactionId,
+      transactionId: `conekta_${charge.id}`,
       paymentIntent: paymentIntent,
       conektaOrder: {
         id: order.id,

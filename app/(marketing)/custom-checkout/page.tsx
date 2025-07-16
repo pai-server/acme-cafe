@@ -60,15 +60,15 @@ export default function CheckoutPage() {
             throw new Error('No se pudo obtener información del pago');
           }
           const paymentIntentData = await response.json();
-          setPaymentIntent(paymentIntentData);
+          setPaymentIntent(paymentIntentData.paymentIntent);
           
           // Usar los datos del paymentIntent para mostrar el éxito
           setProductDetails({
-            name: paymentIntentData.description || 'Producto',
-            description: paymentIntentData.description || '',
-            amount: paymentIntentData.amount,
-            currency: paymentIntentData.currency,
-            interval: paymentIntentData.metadata?.interval || undefined
+            name: paymentIntentData.paymentIntent.description || 'Producto',
+            description: paymentIntentData.paymentIntent.description || '',
+            amount: paymentIntentData.paymentIntent.amount,
+            currency: paymentIntentData.paymentIntent.currency,
+            interval: paymentIntentData.paymentIntent.metadata?.interval || undefined
           });
           setPaymentSuccess(true);
           setIsLoading(false);
@@ -81,15 +81,15 @@ export default function CheckoutPage() {
           throw new Error('No se pudo obtener información del pago');
         }
         const paymentIntentData = await response.json();
-        setPaymentIntent(paymentIntentData);
+        setPaymentIntent(paymentIntentData.paymentIntent);
         
         // Usar los datos del paymentIntent para mostrar el formulario
         setProductDetails({
-          name: paymentIntentData.description || 'Producto',
-          description: paymentIntentData.description || '',
-          amount: paymentIntentData.amount,
-          currency: paymentIntentData.currency,
-          interval: paymentIntentData.metadata?.interval || undefined
+          name: paymentIntentData.paymentIntent.description || 'Producto',
+          description: paymentIntentData.paymentIntent.description || '',
+          amount: paymentIntentData.paymentIntent.amount,
+          currency: paymentIntentData.paymentIntent.currency,
+          interval: paymentIntentData.paymentIntent.metadata?.interval || undefined
         });
         
         setIsLoading(false);
@@ -129,11 +129,11 @@ export default function CheckoutPage() {
       const tokenResponse = await new Promise((resolve, reject) => {
         conektaInstance.Token.create({
           card: {
-            number: document.getElementById('card-number')?.value,
-            name: document.getElementById('card-name')?.value,
-            exp_year: document.getElementById('card-exp-year')?.value,
-            exp_month: document.getElementById('card-exp-month')?.value,
-            cvc: document.getElementById('card-cvc')?.value,
+            number: (document.getElementById('card-number') as HTMLInputElement)?.value,
+            name: (document.getElementById('card-name') as HTMLInputElement)?.value,
+            exp_year: (document.getElementById('card-exp-year') as HTMLInputElement)?.value,
+            exp_month: (document.getElementById('card-exp-month') as HTMLInputElement)?.value,
+            cvc: (document.getElementById('card-cvc') as HTMLInputElement)?.value,
           }
         }, (token: any) => {
           resolve(token);
@@ -229,6 +229,7 @@ export default function CheckoutPage() {
   
   // Mostrar la confirmación de pago exitoso
   if (paymentSuccess && productDetails) {
+    console.log(productDetails)
     return (
       <div className="max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8">
         <Card className="p-8 text-center">
