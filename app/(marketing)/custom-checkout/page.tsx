@@ -3,12 +3,12 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ArrowLeft, ShieldCheck, Clock, Coffee, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import Script from 'next/script';
 
 interface ProductDetails {
   name: string;
@@ -35,11 +35,9 @@ export default function CheckoutPage() {
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentIntent, setPaymentIntent] = useState<any>(null);
   
-  // Estados para el formulario de tarjeta
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvc, setCardCvc] = useState('');
-  const [cardName, setCardName] = useState('');
+  // Estados para Conekta
+  const [conektaLoaded, setConektaLoaded] = useState(false);
+  const [conektaInstance, setConektaInstance] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   
   useEffect(() => {
@@ -94,9 +92,6 @@ export default function CheckoutPage() {
           interval: paymentIntentData.metadata?.interval || undefined
         });
         
-        // Pre-llenar los campos con los datos del checkout anterior
-        if (name) setCardName(name);
-        
         setIsLoading(false);
       } catch (err: any) {
         setError(err.message || 'Error al cargar los detalles del producto');
@@ -107,82 +102,55 @@ export default function CheckoutPage() {
     fetchPaymentIntent();
   }, [paymentIntentId, transactionId, name, email, searchParams]);
   
-  // Formatear número de tarjeta con espacios cada 4 dígitos
-  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\s/g, '').replace(/\D/g, '');
-    if (value.length > 16) value = value.substr(0, 16);
-    
-    // Agregar espacios cada 4 dígitos
-    const parts = [];
-    for (let i = 0; i < value.length; i += 4) {
-      parts.push(value.substr(i, 4));
+  // Inicializar Conekta cuando se cargue el script
+  const initializeConekta = () => {
+    if (typeof (window as any).Conekta !== 'undefined') {
+      const conekta = (window as any).Conekta;
+      conekta.setPublishableKey(process.env.NEXT_PUBLIC_CONEKTA_PUBLIC_KEY!);
+      setConektaInstance(conekta);
+      setConektaLoaded(true);
     }
-    setCardNumber(parts.join(' ').trim());
   };
   
-  // Formatear fecha de expiración con formato MM/YY
-  const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, '');
-    if (value.length > 4) value = value.substr(0, 4);
-    
-    if (value.length > 2) {
-      value = value.substr(0, 2) + '/' + value.substr(2);
-    }
-    
-    setCardExpiry(value);
-  };
-  
-  // Limitar CVC a 3 o 4 dígitos
-  const handleCvcChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, '');
-    if (value.length > 4) value = value.substr(0, 4);
-    setCardCvc(value);
-  };
-  
-  // Manejar el envío del formulario
+  // Manejar el envío del formulario con Conekta
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     
-    // Validaciones básicas
-    if (!cardNumber || cardNumber.replace(/\s/g, '').length < 16) {
-      setError('Número de tarjeta inválido');
-      setSubmitting(false);
-      return;
-    }
-    
-    if (!cardExpiry || cardExpiry.length < 5) {
-      setError('Fecha de expiración inválida');
-      setSubmitting(false);
-      return;
-    }
-    
-    if (!cardCvc || cardCvc.length < 3) {
-      setError('CVC inválido');
-      setSubmitting(false);
-      return;
-    }
-    
-    if (!cardName) {
-      setError('Por favor ingresa el nombre del titular');
+    if (!conektaInstance) {
+      setError('Error al inicializar el sistema de pagos');
       setSubmitting(false);
       return;
     }
     
     try {
-      // Enviar datos al endpoint de procesamiento de pago real
-      const response = await fetch('/api/custom-checkout/process-card-payment', {
+      // Crear token con Conekta
+      const tokenResponse = await new Promise((resolve, reject) => {
+        conektaInstance.Token.create({
+          card: {
+            number: document.getElementById('card-number')?.value,
+            name: document.getElementById('card-name')?.value,
+            exp_year: document.getElementById('card-exp-year')?.value,
+            exp_month: document.getElementById('card-exp-month')?.value,
+            cvc: document.getElementById('card-cvc')?.value,
+          }
+        }, (token: any) => {
+          resolve(token);
+        }, (error: any) => {
+          reject(error);
+        });
+      });
+      
+      // Enviar token a nuestro endpoint para procesar el pago
+      const response = await fetch('/api/custom-checkout/process-conekta-payment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           paymentIntentId,
-          cardNumber: cardNumber.replace(/\s/g, ''),
-          expiryDate: cardExpiry,
-          cvv: cardCvc,
-          cardholderName: cardName,
+          token: (tokenResponse as any).id,
           amount: paymentIntent?.amount,
           currency: paymentIntent?.currency
         }),
@@ -291,143 +259,179 @@ export default function CheckoutPage() {
   }
   
   return (
-    <div className="max-w-6xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-      <div className="mb-8">
-        <Link href="/pricing" className="inline-flex items-center text-orange-600 hover:text-orange-700">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Volver a planes
-        </Link>
-      </div>
+    <>
+      {/* Cargar el script de Conekta */}
+      <Script
+        src="https://cdn.conekta.io/js/latest/conekta.js"
+        onLoad={initializeConekta}
+        strategy="afterInteractive"
+      />
       
-      <h1 className="text-3xl font-bold text-gray-900 mb-8 text-center">Finaliza tu compra</h1>
-      
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Formulario de pago */}
-        <div className="lg:col-span-7 order-1 lg:order-1">
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-gray-900 mb-6">Información de tu tarjeta</h2>
-            
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-6">
-                {/* Nombre en la tarjeta */}
-                <div>
-                  <Label htmlFor="card-name">Nombre en la tarjeta</Label>
-                  <Input
-                    id="card-name"
-                    placeholder="Nombre completo como aparece en la tarjeta"
-                    value={cardName}
-                    onChange={(e) => setCardName(e.target.value)}
-                    className="mt-1"
-                    required
-                  />
-                </div>
-                
-                {/* Número de tarjeta */}
-                <div>
-                  <Label htmlFor="card-number">Número de tarjeta</Label>
-                  <Input
-                    id="card-number"
-                    placeholder="1234 5678 9012 3456"
-                    value={cardNumber}
-                    onChange={handleCardNumberChange}
-                    className="mt-1 font-mono"
-                    required
-                  />
-                </div>
-                
-                {/* Fecha de expiración y CVC */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="card-expiry">Fecha de expiración</Label>
-                    <Input
-                      id="card-expiry"
-                      placeholder="MM/YY"
-                      value={cardExpiry}
-                      onChange={handleExpiryChange}
-                      className="mt-1 font-mono"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="card-cvc">CVC</Label>
-                    <Input
-                      id="card-cvc"
-                      placeholder="123"
-                      value={cardCvc}
-                      onChange={handleCvcChange}
-                      className="mt-1 font-mono"
-                      required
-                    />
-                  </div>
-                </div>
-                
-                <Button
-                  type="submit"
-                  className="w-full bg-orange-600 hover:bg-orange-700"
-                  disabled={submitting}
-                >
-                  {submitting ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                      Procesando...
-                    </>
-                  ) : (
-                    <>Pagar {productDetails ? formatMoney(productDetails.amount, productDetails.currency || 'MXN') : ''}</>
-                  )}
-                </Button>
-                
-                <div className="text-center text-xs text-gray-500 flex items-center justify-center space-x-2 mt-4">
-                  <ShieldCheck size={16} />
-                  <span>Pago seguro y encriptado</span>
-                </div>
-              </div>
-            </form>
-          </Card>
+      <div className="max-w-6xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <Link href="/pricing" className="inline-flex items-center text-orange-600 hover:text-orange-700">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Volver a planes
+          </Link>
         </div>
         
-        {/* Resumen de la compra */}
-        <div className="lg:col-span-5 order-0 lg:order-2">
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Resumen de compra</h2>
-            
-            {productDetails && (
-              <div>
-                <div className="flex justify-between mb-2">
-                  <span className="font-medium">{productDetails.name}</span>
-                  <span>{formatMoney(productDetails.amount, productDetails.currency || 'MXN')}</span>
+        <h1 className="text-3xl font-bold text-gray-900 mb-8 text-center">Finaliza tu compra</h1>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Formulario de pago con Conekta */}
+          <div className="lg:col-span-7 order-1 lg:order-1">
+            <Card className="p-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-6">Información de tu tarjeta</h2>
+              
+              {!conektaLoaded ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mr-3"></div>
+                  <span>Cargando sistema de pagos...</span>
                 </div>
-                {productDetails.interval && (
-                  <div className="text-sm text-gray-500 mb-4">
-                    Facturación {productDetails.interval}
+              ) : (
+                <form onSubmit={handleSubmit}>
+                  <div className="space-y-6">
+                    {/* Nombre en la tarjeta */}
+                    <div>
+                      <Label htmlFor="card-name">Nombre en la tarjeta</Label>
+                      <input
+                        id="card-name"
+                        type="text"
+                        placeholder="Nombre completo como aparece en la tarjeta"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500"
+                        required
+                      />
+                    </div>
+                    
+                    {/* Número de tarjeta */}
+                    <div>
+                      <Label htmlFor="card-number">Número de tarjeta</Label>
+                      <input
+                        id="card-number"
+                        type="text"
+                        placeholder="4242 4242 4242 4242"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500 font-mono"
+                        required
+                      />
+                    </div>
+                    
+                    {/* Fecha de expiración y CVC */}
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <Label htmlFor="card-exp-month">Mes</Label>
+                        <select
+                          id="card-exp-month"
+                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500"
+                          required
+                        >
+                          <option value="">Mes</option>
+                          {Array.from({ length: 12 }, (_, i) => (
+                            <option key={i + 1} value={String(i + 1).padStart(2, '0')}>
+                              {String(i + 1).padStart(2, '0')}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <Label htmlFor="card-exp-year">Año</Label>
+                        <select
+                          id="card-exp-year"
+                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500"
+                          required
+                        >
+                          <option value="">Año</option>
+                          {Array.from({ length: 10 }, (_, i) => {
+                            const year = new Date().getFullYear() + i;
+                            return (
+                              <option key={year} value={String(year).slice(-2)}>
+                                {year}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      <div>
+                        <Label htmlFor="card-cvc">CVC</Label>
+                        <input
+                          id="card-cvc"
+                          type="text"
+                          placeholder="123"
+                          maxLength={4}
+                          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500 font-mono"
+                          required
+                        />
+                      </div>
+                    </div>
+                    
+                    <Button
+                      type="submit"
+                      className="w-full bg-orange-600 hover:bg-orange-700"
+                      disabled={submitting || !conektaLoaded}
+                    >
+                      {submitting ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                          Procesando...
+                        </>
+                      ) : (
+                        <>Pagar {productDetails ? formatMoney(productDetails.amount, productDetails.currency || 'MXN') : ''}</>
+                      )}
+                    </Button>
+                    
+                    <div className="text-center text-xs text-gray-500 flex items-center justify-center space-x-2 mt-4">
+                      <ShieldCheck size={16} />
+                      <span>Pago seguro y encriptado con Conekta</span>
+                    </div>
                   </div>
-                )}
+                </form>
+              )}
+            </Card>
+          </div>
+          
+          {/* Resumen de la compra */}
+          <div className="lg:col-span-5 order-0 lg:order-2">
+            <Card className="p-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Resumen de compra</h2>
+              
+              {productDetails && (
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <span className="font-medium">{productDetails.name}</span>
+                    <span>{formatMoney(productDetails.amount, productDetails.currency || 'MXN')}</span>
+                  </div>
+                  {productDetails.interval && (
+                    <div className="text-sm text-gray-500 mb-4">
+                      Facturación {productDetails.interval}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              <Separator className="my-4" />
+              
+              <div className="flex justify-between font-bold">
+                <span>Total</span>
+                <span>{productDetails ? formatMoney(productDetails.amount, productDetails.currency || 'MXN') : '-'}</span>
               </div>
-            )}
-            
-            <Separator className="my-4" />
-            
-            <div className="flex justify-between font-bold">
-              <span>Total</span>
-              <span>{productDetails ? formatMoney(productDetails.amount, productDetails.currency || 'MXN') : '-'}</span>
-            </div>
-            
-            <div className="mt-6 space-y-3">
-              <div className="flex items-start space-x-2 text-sm text-gray-600">
-                <Coffee className="h-5 w-5 flex-shrink-0 text-orange-600" />
-                <span>Acceso inmediato a todas las funciones premium</span>
+              
+              <div className="mt-6 space-y-3">
+                <div className="flex items-start space-x-2 text-sm text-gray-600">
+                  <Coffee className="h-5 w-5 flex-shrink-0 text-orange-600" />
+                  <span>Acceso inmediato a todas las funciones premium</span>
+                </div>
+                <div className="flex items-start space-x-2 text-sm text-gray-600">
+                  <Clock className="h-5 w-5 flex-shrink-0 text-orange-600" />
+                  <span>Soporte técnico prioritario 24/7</span>
+                </div>
+                <div className="flex items-start space-x-2 text-sm text-gray-600">
+                  <ShieldCheck className="h-5 w-5 flex-shrink-0 text-orange-600" />
+                  <span>Garantía de devolución de 30 días</span>
+                </div>
               </div>
-              <div className="flex items-start space-x-2 text-sm text-gray-600">
-                <Clock className="h-5 w-5 flex-shrink-0 text-orange-600" />
-                <span>Soporte técnico prioritario 24/7</span>
-              </div>
-              <div className="flex items-start space-x-2 text-sm text-gray-600">
-                <ShieldCheck className="h-5 w-5 flex-shrink-0 text-orange-600" />
-                <span>Garantía de devolución de 30 días</span>
-              </div>
-            </div>
-          </Card>
+            </Card>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

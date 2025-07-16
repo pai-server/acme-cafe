@@ -105,27 +105,6 @@ export async function POST(request: Request) {
         }
       });
     }
-    
-    // Record el pago en Stripe (opcional, si se requiere)
-    // const paymentRecord = await stripe.paymentRecords.reportPayment({
-    //   amount_requested: {
-    //     value: paymentResult.amount,
-    //     currency: paymentResult.currency
-    //   },
-    //   payment_method_details: {
-    //     payment_method: paymentMethod.id
-    //   },
-    //   customer_details: {
-    //     customer: paymentResult.customerId
-    //   },
-    //   initiated_at: paymentResult.initiated_at,
-    //   customer_presence: 'on_session',
-    //   payment_reference: paymentResult.id,
-    //   outcome: 'guaranteed',
-    //   guaranteed: {
-    //     guaranteed_at: paymentResult.completed_at
-    //   }
-    // });
 
     // Generar ID de transacción simulado
     const transactionId = `sim_${Math.random().toString(36).substring(2, 15)}`;
