@@ -9,7 +9,7 @@ import {
 import { isSubscriptionActive, getSubscriptionStatusText, subscriptionNeedsAttention } from '@/lib/payments/subscription-helpers';
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-04-30.basil'
+  apiVersion: '2025-06-30.preview; payment_records_beta=v1;invoice_partial_payments_beta=v2'
 });
 
 export async function createCheckoutSession({

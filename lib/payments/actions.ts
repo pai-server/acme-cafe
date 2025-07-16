@@ -7,6 +7,16 @@ import { withTeam } from '@/lib/auth/middleware';
 export const checkoutAction = withTeam(async (formData, team) => {
   const priceId = formData.get('priceId') as string;
   const trialPeriodDays = Number(formData.get('trialPeriodDays') as string);
+  
+  // Redirigir a la página de checkout personalizada en lugar de Stripe
+  const teamId = team?.id ? `&teamId=${team.id}` : '';
+  redirect(`/checkout?priceId=${priceId}&trialDays=${trialPeriodDays}${teamId}`);
+});
+
+// Mantener la función original por compatibilidad
+export const stripeCheckoutAction = withTeam(async (formData, team) => {
+  const priceId = formData.get('priceId') as string;
+  const trialPeriodDays = Number(formData.get('trialPeriodDays') as string);
   await createCheckoutSession({ team: team, priceId, trialPeriodDays });
 });
 
