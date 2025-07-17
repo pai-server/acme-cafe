@@ -55,6 +55,7 @@ async function handleOrderPaid(order: any) {
   try {
     order = order.object;
     console.log('Processing order.paid event:', order.id);
+    console.log('Order data:', order);
     
     // Verificar que el order tenga charges
     if (!order.charges || order.charges.data.length === 0) {
@@ -65,18 +66,16 @@ async function handleOrderPaid(order: any) {
     const charge = order.charges.data[0];
     
     // Extraer información de Stripe desde metadata
-    const stripePaymentIntentId = order.metadata?.stripe_payment_intent_id;
     const stripeCustomerId = order.metadata?.stripe_customer_id;
     const stripeInvoiceId = order.metadata?.stripe_invoice_id;
     const stripeSubscriptionId = order.metadata?.stripe_subscription_id;
     
-    if (!stripePaymentIntentId || !stripeCustomerId) {
+    if (!stripeCustomerId || !stripeInvoiceId) {
       console.error('Missing Stripe metadata in order');
       return;
     }
     
     // Obtener información de Stripe
-    const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
     const customer = await stripe.customers.retrieve(stripeCustomerId);
     
     // Verificar si ya existe un método de pago en Stripe para este cargo de Conekta

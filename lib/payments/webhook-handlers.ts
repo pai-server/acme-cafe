@@ -118,9 +118,12 @@ export async function processWebhookEvent(event: Stripe.Event): Promise<void> {
         await handleCustomerEvent(event);
         break;
 
+      case WebhookEventType.INVOICE_FINALIZED:
+        await handleInvoiceFinalizedEvent(event);
+        break;
+
       // Log but don't process these events for now
       case WebhookEventType.INVOICE_CREATED:
-      case WebhookEventType.INVOICE_FINALIZED:
       case WebhookEventType.INVOICE_UPCOMING:
       case WebhookEventType.SETUP_INTENT_CREATED:
       case WebhookEventType.SETUP_INTENT_SUCCEEDED:
@@ -169,6 +172,7 @@ async function extractTeamIdFromEvent(event: Stripe.Event): Promise<number | und
     case WebhookEventType.INVOICE_PAYMENT_FAILED:
     case WebhookEventType.INVOICE_PAYMENT_SUCCEEDED:
     case WebhookEventType.INVOICE_PAID:
+    case WebhookEventType.INVOICE_FINALIZED:
       customerId = (event.data.object as Stripe.Invoice).customer as string;
       break;
 
@@ -310,4 +314,211 @@ async function handleCustomerEvent(event: Stripe.Event): Promise<void> {
   const customer = event.data.object as Stripe.Customer;
   console.log(`Customer event ${event.type}: ${customer.id}`);
   // Log customer changes if needed
-} 
+}
+
+// Handle finalized invoice - Create charge in Conekta
+async function handleInvoiceFinalizedEvent(event: Stripe.Event): Promise<void> {
+  const invoice = event.data.object as Stripe.Invoice;
+  const customerId = invoice.customer as string;
+  
+  console.log(`Processing invoice finalized event for invoice ${invoice.id}`);
+  
+  // Declarar subscriptionId al inicio para que esté disponible en toda la función
+  let subscriptionId: string | null = null;
+  
+  try {
+    // Obtener el cliente de Stripe con información expandida
+    const stripeCustomer = await stripe.customers.retrieve(customerId);
+    
+    if (!stripeCustomer || stripeCustomer.deleted) {
+      console.warn(`Customer ${customerId} not found or deleted`);
+      return;
+    }
+
+    // Buscar el cliente en Conekta usando el stripe_customer_id en metadata
+    let conektaCustomer;
+    const existingCustomersResponse = await fetch(`https://api.conekta.io/customers?email=${encodeURIComponent(stripeCustomer.email || '')}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+        'Accept': 'application/vnd.conekta-v2.0.0+json'
+      }
+    });
+
+    if (existingCustomersResponse.ok) {
+      const existingCustomers = await existingCustomersResponse.json();
+      
+      // Buscar customer que tenga el stripe_customer_id en metadata
+      const matchingCustomer = existingCustomers.data?.find((customer: any) =>
+        customer.metadata?.stripe_customer_id === stripeCustomer.id
+      );
+      
+      if (matchingCustomer) {
+        conektaCustomer = matchingCustomer;
+        console.log('Cliente encontrado en Conekta:', conektaCustomer.id);
+      }
+    }
+
+    if (!conektaCustomer) {
+      console.warn(`No se encontró cliente en Conekta para Stripe customer ${customerId}`);
+      return;
+    }
+
+    // Obtener los payment sources del cliente en Conekta
+    const paymentSourcesResponse = await fetch(`https://api.conekta.io/customers/${conektaCustomer.id}/payment_sources`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+        'Accept': 'application/vnd.conekta-v2.0.0+json'
+      }
+    });
+
+    if (!paymentSourcesResponse.ok) {
+      console.error('Error obteniendo payment sources de Conekta');
+      return;
+    }
+
+    const paymentSources = await paymentSourcesResponse.json();
+
+    // Obtener información de la suscripción si existe
+    let validPaymentSource = null;
+    
+    // En Stripe Invoice, la suscripción puede ser string o null
+    if ((invoice as any).subscription) {
+      subscriptionId = (invoice as any).subscription as string;
+      
+      // 1. Obtener la suscripción de Stripe
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ['default_payment_method']
+      });
+      
+      if (subscription.default_payment_method) {
+        // 2. Buscar el conekta_payment_source_id en el metadata
+        const conektaPaymentSourceId = subscription.default_payment_method.metadata?.conekta_payment_source_id;
+        
+        if (conektaPaymentSourceId) {
+          // 3. Buscar el payment source específico en Conekta
+          validPaymentSource = paymentSources.data?.find((source: any) =>
+            source.id === conektaPaymentSourceId
+          );
+          
+          if (validPaymentSource) {
+            console.log(`Método de pago encontrado en Conekta: ${validPaymentSource.id}`);
+          } else {
+            console.warn(`Payment source ${conektaPaymentSourceId} no encontrado en Conekta para customer ${conektaCustomer.id}`);
+          }
+        } else {
+          console.warn(`No se encontró conekta_payment_source_id en metadata del método de pago ${subscription.default_payment_method.id}`);
+        }
+      } else {
+        console.warn(`La suscripción ${subscriptionId} no tiene método de pago por defecto`);
+      }
+    }
+    
+    // Fallback: Buscar un payment source válido (usar el más reciente de tipo card)
+    if (!validPaymentSource) {
+      console.log('Usando fallback para buscar método de pago válido...');
+      validPaymentSource = paymentSources.data?.find((source: any) =>
+        source.type === 'card' &&
+        source.metadata?.stripe_customer_id === stripeCustomer.id
+      );
+    }
+
+    if (!validPaymentSource) {
+      console.warn(`No se encontró método de pago válido en Conekta para customer ${conektaCustomer.id}`);
+      return;
+    }
+
+    // Crear la orden en Conekta
+    const conektaOrderData = {
+      currency: (invoice.currency || 'MXN').toUpperCase(),
+      customer_info: {
+        customer_id: conektaCustomer.id
+      },
+      line_items: [{
+        name: `Factura ${invoice.number || invoice.id}`,
+        unit_price: invoice.amount_due, // Conekta usa centavos
+        quantity: 1,
+        metadata: {
+          stripe_invoice_id: invoice.id,
+          stripe_customer_id: stripeCustomer.id,
+          stripe_subscription_id: subscriptionId,
+          webhook_source: 'invoice_finalized'
+        }
+      }],
+      charges: [{
+        payment_method: {
+          type: 'card',
+          payment_source_id: validPaymentSource.id
+        }
+      }],
+      metadata: {
+        stripe_invoice_id: invoice.id,
+        stripe_customer_id: stripeCustomer.id,
+        stripe_subscription_id: subscriptionId,
+        conekta_customer_id: conektaCustomer.id,
+        conekta_payment_source_id: validPaymentSource.id,
+        webhook_source: 'invoice_finalized',
+        invoice_number: invoice.number || invoice.id
+      }
+    };
+
+    const conektaResponse = await fetch('https://api.conekta.io/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+        'Accept': 'application/vnd.conekta-v2.0.0+json'
+      },
+      body: JSON.stringify(conektaOrderData)
+    });
+
+    if (!conektaResponse.ok) {
+      const errorData = await conektaResponse.json();
+      console.error('Error creando orden en Conekta:', errorData);
+      throw new Error(`Error de Conekta: ${errorData.message || 'Error desconocido'}`);
+    }
+
+    const order = await conektaResponse.json();
+
+    // Verificar que el pago fue procesado
+    if (!order.charges || order.charges.data.length === 0) {
+      throw new Error('No se generaron cargos en la orden de Conekta');
+    }
+
+    const charge = order.charges.data[0];
+    
+    console.log(`Cargo creado en Conekta: ${charge.id} para factura ${invoice.id}`);
+    console.log(`Estado del cargo: ${charge.status}`);
+    console.log(`Monto: ${charge.amount} ${charge.currency}`);
+
+    // Log subscription event para tracking
+    const team = await getTeamByStripeCustomerId(customerId);
+    if (team) {
+      await logSubscriptionEvent({
+        teamId: team.id,
+        eventType: SubscriptionEventType.PAYMENT_SUCCEEDED,
+        stripeSubscriptionId: subscriptionId,
+        description: `Cargo creado en Conekta ${charge.id} para factura ${invoice.id}`,
+        userNotified: 'pending'
+      });
+    }
+
+  } catch (error) {
+    console.error(`Error procesando factura finalizada ${invoice.id}:`, error);
+    
+    // Log subscription event para tracking del error
+    const team = await getTeamByStripeCustomerId(customerId);
+    if (team) {
+      await logSubscriptionEvent({
+        teamId: team.id,
+        eventType: SubscriptionEventType.PAYMENT_FAILED,
+        stripeSubscriptionId: subscriptionId,
+        description: `Error creando cargo en Conekta para factura ${invoice.id}: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        userNotified: 'pending'
+      });
+    }
+    
+    throw error; // Re-throw para que el webhook falle y se reintente
+  }
+}
