@@ -88,18 +88,14 @@ async function handleOrderPaid(order: any) {
       type: 'custom'
     });
     
-    // Buscar payment method que tenga el mismo conekta_charge_id en metadata
-    const matchingPaymentMethod = existingPaymentMethods.data.find((pm) =>
-      pm.metadata?.conekta_charge_id === charge.id ||
-      pm.metadata?.conekta_order_id === order.id ||
-      (pm.metadata?.payment_processor === 'conekta' && pm.metadata?.external_id === `conekta_${charge.id}`)
-    );
-    
-    if (matchingPaymentMethod) {
-      paymentMethod = matchingPaymentMethod;
-      existingPaymentMethodId = matchingPaymentMethod.id;
-      console.log('Payment method existente encontrado en Stripe:', existingPaymentMethodId);
+    if (!existingPaymentMethods || existingPaymentMethods.data.length === 0) {
+      console.log('No existing payment methods found for customer:', stripeCustomerId);
     } else {
+      console.log('Existing payment methods found:', existingPaymentMethods.data.length);
+      paymentMethod = existingPaymentMethods.data[0];
+    }
+    
+    if (!paymentMethod) {
       // Crear método de pago personalizado en Stripe
       paymentMethod = await stripe.paymentMethods.create({
         type: 'custom',
