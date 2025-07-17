@@ -168,9 +168,12 @@ export async function POST(request: Request) {
 
     const charge = order.charges.data[0];
     
-    // Crear método de pago personalizado en Stripe usando un card payment method
+    // Crear método de pago personalizado en Stripe (funcionalidad experimental)
+    // @ts-ignore - Usando funcionalidad experimental de Stripe
     const paymentMethod = await stripe.paymentMethods.create({
+      // @ts-ignore - type 'custom' es experimental
       type: 'custom',
+      // @ts-ignore - propiedad custom es experimental
       custom: {
         type: 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR',
       },
@@ -223,8 +226,10 @@ export async function POST(request: Request) {
       }
     });
     
-    // Actualizar el invoice con el método de pago
+    // Actualizar el invoice con el método de pago (funcionalidad experimental)
+    // @ts-ignore - attachPayment es funcionalidad experimental
     await stripe.invoices.attachPayment(invoice.id, {
+      // @ts-ignore - payment_record_data es experimental
       payment_record_data: {
         amount: charge.amount,
         currency: charge.currency,
