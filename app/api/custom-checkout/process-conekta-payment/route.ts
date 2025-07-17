@@ -65,6 +65,135 @@ export async function POST(request: Request) {
     }
 
     // Usar API REST de Conekta directamente
+    
+    // 1. Verificar si el customer ya existe en Conekta
+    let conektaCustomer;
+    let existingCustomerId = null;
+    
+    // Buscar customer existente por email
+    const existingCustomersResponse = await fetch(`https://api.conekta.io/customers?email=${encodeURIComponent(stripeCustomer.email)}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+        'Accept': 'application/vnd.conekta-v2.0.0+json'
+      }
+    });
+
+    if (existingCustomersResponse.ok) {
+      const existingCustomers = await existingCustomersResponse.json();
+      
+      // Buscar customer que tenga el stripe_customer_id en metadata
+      const matchingCustomer = existingCustomers.data?.find((customer: any) =>
+        customer.metadata?.stripe_customer_id === stripeCustomer.id
+      );
+      
+      if (matchingCustomer) {
+        conektaCustomer = matchingCustomer;
+        existingCustomerId = matchingCustomer.id;
+        console.log('Customer existente encontrado en Conekta:', existingCustomerId);
+      }
+    }
+    
+    // Si no existe, crear customer en Conekta
+    if (!conektaCustomer) {
+      const conektaCustomerResponse = await fetch('https://api.conekta.io/customers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+          'Accept': 'application/vnd.conekta-v2.0.0+json'
+        },
+        body: JSON.stringify({
+          name: stripeCustomer.name || 'Cliente',
+          email: stripeCustomer.email,
+          phone: stripeCustomer.phone || undefined,
+          metadata: {
+            stripe_customer_id: stripeCustomer.id,
+            stripe_payment_intent_id: paymentIntent.id,
+            stripe_subscription_id: subscription.id,
+            source: 'custom_checkout'
+          }
+        })
+      });
+
+      if (!conektaCustomerResponse.ok) {
+        const customerError = await conektaCustomerResponse.json();
+        console.error('Error creando customer en Conekta:', customerError);
+        return NextResponse.json(
+          { message: 'Error al crear el cliente en Conekta' },
+          { status: 400 }
+        );
+      }
+
+      conektaCustomer = await conektaCustomerResponse.json();
+      console.log('Nuevo customer creado en Conekta:', conektaCustomer.id);
+    }
+
+    // 2. Verificar si ya existe un payment source para este token/tarjeta
+    let paymentSource;
+    let existingPaymentSourceId = null;
+    
+    // Obtener payment sources existentes del customer
+    const paymentSourcesResponse = await fetch(`https://api.conekta.io/customers/${conektaCustomer.id}/payment_sources`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+        'Accept': 'application/vnd.conekta-v2.0.0+json'
+      }
+    });
+
+    if (paymentSourcesResponse.ok) {
+      const paymentSources = await paymentSourcesResponse.json();
+      
+      // Buscar payment source que tenga el mismo stripe_payment_intent_id en metadata
+      // o que sea del mismo tipo y tenga características similares
+      const matchingPaymentSource = paymentSources.data?.find((source: any) =>
+        source.metadata?.stripe_payment_intent_id === paymentIntent.id ||
+        (source.type === 'card' && source.metadata?.stripe_customer_id === stripeCustomer.id)
+      );
+      
+      if (matchingPaymentSource) {
+        paymentSource = matchingPaymentSource;
+        existingPaymentSourceId = matchingPaymentSource.id;
+        console.log('Payment source existente encontrado en Conekta:', existingPaymentSourceId);
+      }
+    }
+    
+    // Si no existe, crear y adjuntar el método de pago al customer de Conekta
+    if (!paymentSource) {
+      const paymentSourceResponse = await fetch(`https://api.conekta.io/customers/${conektaCustomer.id}/payment_sources`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${Buffer.from(process.env.CONEKTA_PRIVATE_KEY + ':').toString('base64')}`,
+          'Accept': 'application/vnd.conekta-v2.0.0+json'
+        },
+        body: JSON.stringify({
+          type: 'card',
+          token_id: token,
+          metadata: {
+            stripe_customer_id: stripeCustomer.id,
+            stripe_payment_intent_id: paymentIntent.id,
+            stripe_invoice_id: invoice.id,
+            created_for: 'custom_checkout'
+          }
+        })
+      });
+
+      if (!paymentSourceResponse.ok) {
+        const paymentSourceError = await paymentSourceResponse.json();
+        console.error('Error adjuntando método de pago en Conekta:', paymentSourceError);
+        return NextResponse.json(
+          { message: 'Error al adjuntar el método de pago en Conekta' },
+          { status: 400 }
+        );
+      }
+
+      paymentSource = await paymentSourceResponse.json();
+      console.log('Nuevo método de pago adjuntado en Conekta:', paymentSource.id);
+    }
+
+    // 3. Crear la orden en Conekta usando el customer y método de pago existentes
     const conektaResponse = await fetch('https://api.conekta.io/orders', {
       method: 'POST',
       headers: {
@@ -75,12 +204,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         currency: (paymentIntent.currency || 'MXN').toUpperCase(),
         customer_info: {
-          name: stripeCustomer.name || 'Cliente',
-          email: stripeCustomer.email,
-          metadata: {
-            stripe_customer_id: stripeCustomer.id,
-            source: 'custom_checkout'
-          }
+          customer_id: conektaCustomer.id  // Usar el customer ya creado
         },
         line_items: [{
           name: paymentIntent.description || 'Suscripción Premium',
@@ -95,13 +219,16 @@ export async function POST(request: Request) {
         charges: [{
           payment_method: {
             type: 'card',
-            token_id: token
+            payment_source_id: paymentSource.id  // Usar el payment source adjuntado
           }
         }],
         metadata: {
           stripe_payment_intent_id: paymentIntent.id,
           stripe_invoice_id: invoice.id,
           stripe_subscription_id: subscription.id,
+          stripe_customer_id: stripeCustomer.id,
+          conekta_customer_id: conektaCustomer.id,
+          conekta_payment_source_id: paymentSource.id,
           checkout_type: 'custom_subscription'
         }
       })
@@ -110,30 +237,6 @@ export async function POST(request: Request) {
     if (!conektaResponse.ok) {
       const errorData = await conektaResponse.json();
       console.error('Error de Conekta:', errorData);
-      
-      // Registra en Stripe el error de Conekta
-      const paymentRecord = await stripe.paymentRecords.reportPayment({
-        amount_requested: {
-          value: errorData.data.amount,
-          currency: errorData.data.currency
-        },
-        customer_details: {
-          customer: stripeCustomer.id
-        },
-        payment_method_details: {
-          custom: {
-            type: 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR',
-          },
-          type: 'custom',
-        },
-        initiated_at: errorData.data.created_at,
-        customer_presence: 'on_session',
-        payment_reference: errorData.data.id,
-        outcome: 'failed',
-        failed: {
-          failed_at: errorData.data.updated_at
-        }
-      });
       
       // Manejar errores específicos de Conekta
       if (errorData.type === 'card_declined') {
@@ -168,89 +271,12 @@ export async function POST(request: Request) {
 
     const charge = order.charges.data[0];
     
-    // Crear método de pago personalizado en Stripe usando un card payment method
-    const paymentMethod = await stripe.paymentMethods.create({
-      type: 'custom',
-      custom: {
-        type: 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR',
-      },
-      metadata: {
-        conekta_order_id: order.id,
-        conekta_charge_id: charge.id,
-        external_id: `conekta_${charge.id}`,
-        payment_processor: 'conekta'
-      }
-    });
-    
-    // Adjuntar el método de pago al customer
-    await stripe.paymentMethods.attach(paymentMethod.id, {
-      customer: stripeCustomer.id
-    });
-    
-    // Actualizar el método de pago por defecto de la suscripción
-    await stripe.subscriptions.update(subscription.id, {
-      default_payment_method: paymentMethod.id
-    });
-
-    // Reportar el pago exitoso a Stripe usando Payment Records en lugar de crear un payment method
-    const paymentRecord = await stripe.paymentRecords.reportPayment({
-      amount_requested: {
-        value: paymentIntent.amount,
-        currency: paymentIntent.currency || 'mxn'
-      },
-      payment_method_details: {
-        type: 'custom',
-        custom: {
-          type: 'cpmt_1RlIoSKqUi3Ta8kBZEgWbZAR',
-        }
-      },
-      customer_details: {
-        customer: stripeCustomer.id
-      },
-      initiated_at: Math.floor(Date.now() / 1000),
-      customer_presence: 'on_session',
-      payment_reference: charge.id,
-      outcome: 'guaranteed',
-      guaranteed: {
-        guaranteed_at: Math.floor(Date.now() / 1000)
-      },
-      metadata: {
-        conekta_order_id: order.id,
-        conekta_charge_id: charge.id,
-        external_id: `conekta_${charge.id}`,
-        payment_processor: 'conekta',
-        paymentIntentId: paymentIntentId
-      }
-    });
-    
-    // Actualizar el invoice con el método de pago
-    await stripe.invoices.attachPayment(invoice.id, {
-      payment_record_data: {
-        amount: charge.amount,
-        currency: charge.currency,
-        money_movement_type: 'out_of_band',
-        paid_at: charge.paid_at,
-        payment_method: paymentMethod.id,
-        payment_reference: charge.id,
-      }
-    });
-    
-    // Marcar el invoice como pagado usando metadata
-    await stripe.invoices.update(invoice.id, {
-      metadata: {
-        payment_processor: 'conekta',
-        conekta_order_id: order.id,
-        conekta_charge_id: charge.id,
-        external_payment_id: charge.id,
-        payment_status: 'paid',
-        paid_at: Math.floor(Date.now() / 1000).toString()
-      }
-    });
+    // El webhook de Conekta se encargará de notificar a Stripe
+    // cuando reciba el evento charge.paid o charge.declined
     
     return NextResponse.json({
       success: true,
       transactionId: `conekta_${charge.id}`,
-      paymentIntent: paymentIntent,
       conektaOrder: {
         id: order.id,
         status: order.payment_status
@@ -261,7 +287,7 @@ export async function POST(request: Request) {
         amount: charge.amount,
         currency: charge.currency
       },
-      message: 'Pago procesado exitosamente con Conekta'
+      message: 'Pago enviado a Conekta - se procesará vía webhook'
     });
 
   } catch (error: any) {
